@@ -54,14 +54,28 @@ def post_reel(
     status_callback: Optional[Callable[[str], None]] = None,
 ) -> dict:
     token = _cfg("INSTAGRAM_ACCESS_TOKEN")
-    user_id = _cfg("INSTAGRAM_USER_ID")
 
     def _log(msg: str):
         print(msg)
         if status_callback:
             status_callback(msg)
 
+    def _err(resp) -> str:
+        try:
+            e = resp.json().get("error", {})
+            return e.get("message") or e.get("error_user_msg") or str(e)
+        except Exception:
+            return resp.text[:300]
+
     with httpx.Client(timeout=600.0) as client:
+        # Resolve user ID dynamically from /me (avoids stale INSTAGRAM_USER_ID secret)
+        try:
+            me = client.get(f"{GRAPH_API}/me", params={"fields": "id", "access_token": token})
+            user_id = me.json()["id"]
+            _log(f"Resolved user ID: {user_id}")
+        except Exception as e:
+            return {"success": False, "error": f"Could not resolve user ID: {e}"}
+
         # Step 1 — create media container
         _log("Creating media container...")
         try:
@@ -77,22 +91,20 @@ def post_reel(
             )
             data = resp.json()
         except Exception as e:
-            return {"success": False, "error": f"Network error creating container: {e}"}
+            return {"success": False, "error": f"Network error: {e}"}
 
         _log(f"Container response: {data}")
 
         if "error" in data:
-            err = data["error"]
-            msg = err.get("message") or err.get("error_user_msg") or str(err)
-            return {"success": False, "error": f"API error: {msg}"}
+            return {"success": False, "error": f"Container error: {_err(resp)}"}
 
         container_id = data.get("id")
         if not container_id:
-            return {"success": False, "error": "No container ID returned — check API permissions"}
+            return {"success": False, "error": f"No container ID — full response: {data}"}
 
-        _log(f"Container {container_id} created. Waiting for Instagram to process video...")
+        _log(f"Container {container_id} created. Waiting for processing...")
 
-        # Step 2 — poll until processing is complete (up to 10 min)
+        # Step 2 — poll until processing complete (up to 10 min)
         for attempt in range(60):
             time.sleep(10)
             sr = client.get(
@@ -118,6 +130,6 @@ def post_reel(
         pd = pr.json()
 
         if "error" in pd:
-            return {"success": False, "error": pd["error"].get("message", "Publish failed")}
+            return {"success": False, "error": f"Publish error: {_err(pr)}"}
 
         return {"success": True, "ig_id": pd.get("id")}
