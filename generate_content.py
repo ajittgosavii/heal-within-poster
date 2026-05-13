@@ -31,13 +31,16 @@ THEMES = [
     ("ocean waves tranquil", "about releasing what no longer serves you"),
 ]
 
-MUSIC_TAGS_CCMIXTER = ["ambient+instrumental", "meditation+instrumental", "healing+ambient", "new+age+instrumental", "zen+instrumental"]
+# Healing frequency / binaural searches are ALWAYS pure instrumental — no vocals possible
 MUSIC_QUERIES_ARCHIVE = [
-    "meditation instrumental ambient",
-    "healing frequencies instrumental",
-    "binaural meditation ambient",
-    "nature sounds meditation instrumental",
-    "chakra healing instrumental",
+    "432hz meditation",
+    "528hz healing",
+    "binaural beats meditation",
+    "solfeggio frequencies healing",
+    "healing tones 432",
+    "binaural beats relaxation",
+    "639hz heart chakra",
+    "tibetan singing bowls meditation",
 ]
 
 
@@ -85,7 +88,7 @@ def _get_ccmixter_music() -> str | None:
     # Use urllib instead of httpx — ccMixter sends oversized headers that trip httpx's buffer limit
     import urllib.request as _ur
     import json as _json
-    tags = random.choice(MUSIC_TAGS_CCMIXTER)
+    tags = random.choice(["ambient+instrumental", "meditation+instrumental", "new+age+instrumental", "drone+ambient"])
     try:
         url = f"http://ccmixter.org/api/query?tags={tags}&f=json&limit=20"
         with _ur.urlopen(url, timeout=20) as resp:
@@ -160,13 +163,16 @@ def _get_archive_music() -> str | None:
                     files = meta.json().get("files", [])
                 except Exception:
                     continue
-                SKIP_WORDS = {"vocal", "voice", "singing", "spoken", "rap", "lyric", "song"}
-                mp3s = [
+                SKIP_WORDS = {"vocal", "voice", "singing", "spoken", "rap", "lyric", "song", "speech", "talk"}
+                # Prefer files whose name hints at instrumental content
+                PREFER_WORDS = {"hz", "binaural", "meditation", "ambient", "healing", "tibetan", "bowl", "solfeggio", "drone", "tone", "relax"}
+                all_mp3s = [
                     f for f in files
                     if f.get("name", "").lower().endswith(".mp3")
                     and 200_000 < int(f.get("size", 0) or 0) < 15_000_000
                     and not any(w in f.get("name", "").lower() for w in SKIP_WORDS)
                 ]
+                mp3s = [f for f in all_mp3s if any(w in f.get("name", "").lower() for w in PREFER_WORDS)] or all_mp3s
                 if not mp3s:
                     continue
                 track = random.choice(mp3s[:3])
