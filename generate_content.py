@@ -75,15 +75,24 @@ def get_pixabay_music() -> str | None:
     try:
         with httpx.Client(timeout=20.0) as client:
             resp = client.get(
-                "https://pixabay.com/api/",
-                params={"key": api_key, "q": query, "media_type": "music", "per_page": 20},
+                "https://pixabay.com/api/music/",
+                params={"key": api_key, "q": query, "per_page": 20},
             )
             data = resp.json()
-        hits = [h for h in data.get("hits", []) if h.get("audio")]
+        hits = [h for h in data.get("hits", []) if h.get("download")]
+        if not hits:
+            print("  No Pixabay music found for query, trying without query...")
+            with httpx.Client(timeout=20.0) as client:
+                resp = client.get(
+                    "https://pixabay.com/api/music/",
+                    params={"key": api_key, "per_page": 20},
+                )
+                data = resp.json()
+            hits = [h for h in data.get("hits", []) if h.get("download")]
         if not hits:
             return None
         track = random.choice(hits)
-        music_url = track["audio"]
+        music_url = track["download"]
         tmp = os.path.join(tempfile.gettempdir(), f"hw_music_{uuid.uuid4().hex}.mp3")
         with httpx.Client(timeout=60.0, follow_redirects=True) as client:
             r = client.get(music_url)
