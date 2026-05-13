@@ -64,20 +64,27 @@ def post_reel(
     with httpx.Client(timeout=600.0) as client:
         # Step 1 — create media container
         _log("Creating media container...")
-        resp = client.post(
-            f"{GRAPH_API}/{user_id}/media",
-            params={
-                "media_type": "REELS",
-                "video_url": cloudinary_url,
-                "caption": caption,
-                "share_to_feed": "true",
-                "access_token": token,
-            },
-        )
-        data = resp.json()
+        try:
+            resp = client.post(
+                f"{GRAPH_API}/{user_id}/media",
+                params={
+                    "media_type": "REELS",
+                    "video_url": cloudinary_url,
+                    "caption": caption,
+                    "share_to_feed": "true",
+                    "access_token": token,
+                },
+            )
+            data = resp.json()
+        except Exception as e:
+            return {"success": False, "error": f"Network error creating container: {e}"}
+
+        _log(f"Container response: {data}")
 
         if "error" in data:
-            return {"success": False, "error": data["error"].get("message", "Container creation failed")}
+            err = data["error"]
+            msg = err.get("message") or err.get("error_user_msg") or str(err)
+            return {"success": False, "error": f"API error: {msg}"}
 
         container_id = data.get("id")
         if not container_id:
