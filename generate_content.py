@@ -69,73 +69,101 @@ def get_pexels_video(theme: str) -> str:
     return tmp
 
 
-def get_pixabay_music() -> str | None:
-    api_key = _cfg("PIXABAY_API_KEY")
-    query = random.choice(PIXABAY_MUSIC_QUERIES)
-    try:
-        with httpx.Client(timeout=20.0) as client:
-            resp = client.get(
-                "https://pixabay.com/api/music/",
-                params={"key": api_key, "q": query, "per_page": 20},
-            )
-        data = resp.json()
-        print(f"  Pixabay music status={resp.status_code} total={data.get('total', '?')} hits={len(data.get('hits', []))}")
-        if data.get("hits"):
-            print(f"  Pixabay hit fields: {list(data['hits'][0].keys())}")
-
-        # Try common URL field names across API versions
-        URL_FIELDS = ["download", "audio", "url", "mp3", "file_url", "preview"]
-        hits = []
-        for h in data.get("hits", []):
-            for field in URL_FIELDS:
-                if h.get(field) and str(h[field]).startswith("http"):
-                    hits.append((h[field], h.get("title", "?")))
-                    break
-
-        if not hits:
-            print("  No downloadable Pixabay tracks — falling back to ccMixter")
-            return _get_ccmixter_music()
-
-        music_url, title = random.choice(hits)
-        print(f"  Pixabay track: {title}")
-        tmp = os.path.join(tempfile.gettempdir(), f"hw_music_{uuid.uuid4().hex}.mp3")
-        with httpx.Client(timeout=60.0, follow_redirects=True) as client:
-            r = client.get(music_url)
-            with open(tmp, "wb") as f:
-                f.write(r.content)
-        print(f"  Music downloaded: {os.path.getsize(tmp) // 1024} KB")
-        return tmp
-    except Exception as e:
-        print(f"  Pixabay music error: {e} — falling back to ccMixter")
-        return _get_ccmixter_music()
+def get_background_music() -> str | None:
+    """Try ccMixter first (CC-licensed, no key), then Archive.org as fallback."""
+    return _get_ccmixter_music() or _get_archive_music()
 
 
 def _get_ccmixter_music() -> str | None:
-    """Fallback: CC-licensed healing music from ccMixter, no API key needed."""
-    tags = random.choice(["ambient", "meditation", "healing", "relaxing", "peaceful"])
+    tags = random.choice(["ambient", "meditation", "healing", "calm", "peaceful"])
     try:
         with httpx.Client(timeout=20.0) as client:
             resp = client.get(
                 "http://ccmixter.org/api/query",
-                params={"tags": tags, "f": "json", "limit": 30, "lic": "open"},
+                params={"tags": tags, "f": "json", "limit": 30},
             )
         hits = resp.json()
-        hits = [h for h in hits if h.get("download_url")]
-        if not hits:
-            print("  ccMixter returned no tracks")
+        if not isinstance(hits, list):
+            print(f"  ccMixter unexpected response: {str(hits)[:200]}")
             return None
-        track = random.choice(hits[:20])
-        music_url = track["download_url"]
-        print(f"  ccMixter track: {track.get('upload_name', '?')}")
+
+        # Download URL is nested: hit["files"][n]["file_download_url"]
+        valid = []
+        for h in hits:
+            for f in h.get("files", []):
+                url = f.get("file_download_url", "")
+                if url and any(url.lower().endswith(ext) for ext in (".mp3", ".ogg", ".wav")):
+                    valid.append((url, h.get("upload_name", "?")))
+                    break
+
+        if not valid:
+            sample_keys = list(hits[0].keys()) if hits else []
+            print(f"  ccMixter: no downloadable files. Hit keys: {sample_keys}")
+            return None
+
+        music_url, title = random.choice(valid[:20])
+        print(f"  ccMixter track: {title}")
         tmp = os.path.join(tempfile.gettempdir(), f"hw_music_{uuid.uuid4().hex}.mp3")
-        with httpx.Client(timeout=60.0, follow_redirects=True) as client:
+        with httpx.Client(timeout=90.0, follow_redirects=True) as client:
             r = client.get(music_url)
             with open(tmp, "wb") as f:
                 f.write(r.content)
         print(f"  Music downloaded: {os.path.getsize(tmp) // 1024} KB")
         return tmp
     except Exception as e:
-        print(f"  ccMixter failed: {e}")
+        print(f"  ccMixter error: {e}")
+        return None
+
+
+def _get_archive_music() -> str | None:
+    """Fallback: free CC-licensed meditation music from Archive.org."""
+    query = random.choice([
+        "meditation ambient music", "healing relaxing music", "zen ambient meditation"
+    ])
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.get(
+                "https://archive.org/advancedsearch.php",
+                params={
+                    "q": f"({query}) AND mediatype:audio AND licenseurl:creativecommons",
+                    "fl[]": "identifier,title",
+                    "output": "json",
+                    "rows": 30,
+                    "sort[]": "downloads desc",
+                },
+            )
+        docs = resp.json().get("response", {}).get("docs", [])
+        if not docs:
+            print("  Archive.org: no results")
+            return None
+
+        random.shuffle(docs)
+        with httpx.Client(timeout=120.0, follow_redirects=True) as client:
+            for item in docs[:6]:
+                identifier = item["identifier"]
+                meta = client.get(f"https://archive.org/metadata/{identifier}")
+                files = meta.json().get("files", [])
+                mp3s = [
+                    f for f in files
+                    if f.get("name", "").lower().endswith(".mp3")
+                    and 100_000 < int(f.get("size", 0) or 0) < 20_000_000
+                ]
+                if not mp3s:
+                    continue
+                track = random.choice(mp3s[:3])
+                music_url = f"https://archive.org/download/{identifier}/{track['name']}"
+                print(f"  Archive.org track: {track['name']}")
+                tmp = os.path.join(tempfile.gettempdir(), f"hw_music_{uuid.uuid4().hex}.mp3")
+                r = client.get(music_url)
+                with open(tmp, "wb") as f:
+                    f.write(r.content)
+                print(f"  Music downloaded: {os.path.getsize(tmp) // 1024} KB")
+                return tmp
+
+        print("  Archive.org: no usable MP3s found")
+        return None
+    except Exception as e:
+        print(f"  Archive.org error: {e}")
         return None
 
 
@@ -217,8 +245,8 @@ def main():
     print("Downloading stock video from Pexels...")
     video_path = get_pexels_video(theme_keyword)
 
-    print("Downloading music from Pixabay...")
-    music_path = get_pixabay_music()
+    print("Downloading background music...")
+    music_path = get_background_music()
 
     print("Processing video with FFmpeg...")
     final_video = process_video(video_path, music_path)
