@@ -78,21 +78,26 @@ def get_pixabay_music() -> str | None:
                 "https://pixabay.com/api/music/",
                 params={"key": api_key, "q": query, "per_page": 20},
             )
-            data = resp.json()
-        hits = [h for h in data.get("hits", []) if h.get("download")]
+        data = resp.json()
+        print(f"  Pixabay music status={resp.status_code} total={data.get('total', '?')} hits={len(data.get('hits', []))}")
+        if data.get("hits"):
+            print(f"  Pixabay hit fields: {list(data['hits'][0].keys())}")
+
+        # Try common URL field names across API versions
+        URL_FIELDS = ["download", "audio", "url", "mp3", "file_url", "preview"]
+        hits = []
+        for h in data.get("hits", []):
+            for field in URL_FIELDS:
+                if h.get(field) and str(h[field]).startswith("http"):
+                    hits.append((h[field], h.get("title", "?")))
+                    break
+
         if not hits:
-            print("  No Pixabay music found for query, trying without query...")
-            with httpx.Client(timeout=20.0) as client:
-                resp = client.get(
-                    "https://pixabay.com/api/music/",
-                    params={"key": api_key, "per_page": 20},
-                )
-                data = resp.json()
-            hits = [h for h in data.get("hits", []) if h.get("download")]
-        if not hits:
-            return None
-        track = random.choice(hits)
-        music_url = track["download"]
+            print("  No downloadable Pixabay tracks — falling back to ccMixter")
+            return _get_ccmixter_music()
+
+        music_url, title = random.choice(hits)
+        print(f"  Pixabay track: {title}")
         tmp = os.path.join(tempfile.gettempdir(), f"hw_music_{uuid.uuid4().hex}.mp3")
         with httpx.Client(timeout=60.0, follow_redirects=True) as client:
             r = client.get(music_url)
@@ -101,7 +106,36 @@ def get_pixabay_music() -> str | None:
         print(f"  Music downloaded: {os.path.getsize(tmp) // 1024} KB")
         return tmp
     except Exception as e:
-        print(f"  Music download failed (posting without music): {e}")
+        print(f"  Pixabay music error: {e} — falling back to ccMixter")
+        return _get_ccmixter_music()
+
+
+def _get_ccmixter_music() -> str | None:
+    """Fallback: CC-licensed healing music from ccMixter, no API key needed."""
+    tags = random.choice(["ambient", "meditation", "healing", "relaxing", "peaceful"])
+    try:
+        with httpx.Client(timeout=20.0) as client:
+            resp = client.get(
+                "http://ccmixter.org/api/query",
+                params={"tags": tags, "f": "json", "limit": 30, "lic": "open"},
+            )
+        hits = resp.json()
+        hits = [h for h in hits if h.get("download_url")]
+        if not hits:
+            print("  ccMixter returned no tracks")
+            return None
+        track = random.choice(hits[:20])
+        music_url = track["download_url"]
+        print(f"  ccMixter track: {track.get('upload_name', '?')}")
+        tmp = os.path.join(tempfile.gettempdir(), f"hw_music_{uuid.uuid4().hex}.mp3")
+        with httpx.Client(timeout=60.0, follow_redirects=True) as client:
+            r = client.get(music_url)
+            with open(tmp, "wb") as f:
+                f.write(r.content)
+        print(f"  Music downloaded: {os.path.getsize(tmp) // 1024} KB")
+        return tmp
+    except Exception as e:
+        print(f"  ccMixter failed: {e}")
         return None
 
 
