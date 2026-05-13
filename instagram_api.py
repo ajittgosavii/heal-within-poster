@@ -21,15 +21,18 @@ def _cfg(key: str) -> str:
 def check_connection() -> dict:
     try:
         token = _cfg("INSTAGRAM_ACCESS_TOKEN")
-        user_id = _cfg("INSTAGRAM_USER_ID")
     except ValueError as e:
         return {"connected": False, "message": str(e)}
 
     try:
         with httpx.Client(timeout=15.0) as client:
+            # Use /me/accounts — works with pages_show_list permission
             resp = client.get(
-                f"{GRAPH_API}/{user_id}",
-                params={"fields": "name,username", "access_token": token},
+                f"{GRAPH_API}/me/accounts",
+                params={
+                    "fields": "id,name,instagram_business_account{id,username,name}",
+                    "access_token": token,
+                },
             )
             data = resp.json()
     except Exception as e:
@@ -38,7 +41,18 @@ def check_connection() -> dict:
     if "error" in data:
         return {"connected": False, "message": data["error"].get("message", "Auth failed")}
 
-    return {"connected": True, "username": data.get("username", ""), "name": data.get("name", "")}
+    # Find Instagram account linked to any connected Page
+    for page in data.get("data", []):
+        ig = page.get("instagram_business_account")
+        if ig:
+            return {
+                "connected": True,
+                "username": ig.get("username", "healwithinbyaparna"),
+                "name": ig.get("name", page.get("name", "")),
+                "ig_id": ig.get("id"),
+            }
+
+    return {"connected": False, "message": "No Instagram Business Account found. Make sure Instagram is linked to your Facebook Page."}
 
 
 def post_reel(

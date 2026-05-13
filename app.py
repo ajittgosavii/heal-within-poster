@@ -98,7 +98,7 @@ with status_col:
         with st.spinner("Checking..."):
             r = check_connection()
         if r["connected"]:
-            st.success(f"@{r['username']}")
+            st.success(f"✓ @{r['username']}")
         else:
             st.error(r["message"])
 
@@ -339,6 +339,8 @@ with tab_settings:
                 r = check_connection()
             if r["connected"]:
                 st.success(f"✓ Connected as **@{r['username']}** — {r['name']}")
+                if r.get("ig_id"):
+                    st.info(f"📋 Your correct INSTAGRAM_USER_ID is: **{r['ig_id']}**")
             else:
                 st.error(f"✗ {r['message']}")
 
