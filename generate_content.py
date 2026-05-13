@@ -75,30 +75,30 @@ def get_background_music() -> str | None:
 
 
 def _get_ccmixter_music() -> str | None:
-    tags = random.choice(["ambient", "meditation", "healing", "calm", "peaceful"])
+    # Use urllib instead of httpx — ccMixter sends oversized headers that trip httpx's buffer limit
+    import urllib.request as _ur
+    import json as _json
+    tags = random.choice(["ambient", "meditation", "healing", "calm"])
     try:
-        with httpx.Client(timeout=20.0) as client:
-            resp = client.get(
-                "http://ccmixter.org/api/query",
-                params={"tags": tags, "f": "json", "limit": 30},
-            )
-        hits = resp.json()
+        url = f"http://ccmixter.org/api/query?tags={tags}&f=json&limit=20"
+        with _ur.urlopen(url, timeout=20) as resp:
+            hits = _json.loads(resp.read())
         if not isinstance(hits, list):
-            print(f"  ccMixter unexpected response: {str(hits)[:200]}")
+            print(f"  ccMixter unexpected response type: {type(hits)}")
             return None
 
-        # Download URL is nested: hit["files"][n]["file_download_url"]
         valid = []
         for h in hits:
             for f in h.get("files", []):
-                url = f.get("file_download_url", "")
-                if url and any(url.lower().endswith(ext) for ext in (".mp3", ".ogg", ".wav")):
-                    valid.append((url, h.get("upload_name", "?")))
+                dl = f.get("file_download_url", "")
+                if dl and any(dl.lower().endswith(ext) for ext in (".mp3", ".ogg", ".wav")):
+                    valid.append((dl, h.get("upload_name", "?")))
                     break
 
         if not valid:
             sample_keys = list(hits[0].keys()) if hits else []
-            print(f"  ccMixter: no downloadable files. Hit keys: {sample_keys}")
+            file_keys = list(hits[0]["files"][0].keys()) if hits and hits[0].get("files") else []
+            print(f"  ccMixter: no downloadable files. hit keys={sample_keys} file keys={file_keys}")
             return None
 
         music_url, title = random.choice(valid[:20])
@@ -116,37 +116,41 @@ def _get_ccmixter_music() -> str | None:
 
 
 def _get_archive_music() -> str | None:
-    """Fallback: free CC-licensed meditation music from Archive.org."""
-    query = random.choice([
-        "meditation ambient music", "healing relaxing music", "zen ambient meditation"
-    ])
+    """Fallback: free meditation music from Archive.org (no API key needed)."""
+    import urllib.request as _ur
+    import urllib.parse as _up
+    import json as _json
+    keyword = random.choice(["meditation", "ambient healing", "zen relaxing", "peaceful nature"])
     try:
-        with httpx.Client(timeout=30.0) as client:
-            resp = client.get(
-                "https://archive.org/advancedsearch.php",
-                params={
-                    "q": f"({query}) AND mediatype:audio AND licenseurl:creativecommons",
-                    "fl[]": "identifier,title",
-                    "output": "json",
-                    "rows": 30,
-                    "sort[]": "downloads desc",
-                },
-            )
-        docs = resp.json().get("response", {}).get("docs", [])
+        params = _up.urlencode([
+            ("q", f"{keyword} AND mediatype:audio"),
+            ("fl[]", "identifier"),
+            ("fl[]", "title"),
+            ("output", "json"),
+            ("rows", "25"),
+            ("sort[]", "downloads desc"),
+        ])
+        search_url = f"https://archive.org/advancedsearch.php?{params}"
+        with _ur.urlopen(search_url, timeout=30) as resp:
+            docs = _json.loads(resp.read()).get("response", {}).get("docs", [])
+
+        print(f"  Archive.org: {len(docs)} results for '{keyword}'")
         if not docs:
-            print("  Archive.org: no results")
             return None
 
         random.shuffle(docs)
         with httpx.Client(timeout=120.0, follow_redirects=True) as client:
-            for item in docs[:6]:
+            for item in docs[:8]:
                 identifier = item["identifier"]
-                meta = client.get(f"https://archive.org/metadata/{identifier}")
-                files = meta.json().get("files", [])
+                try:
+                    meta = client.get(f"https://archive.org/metadata/{identifier}", timeout=15)
+                    files = meta.json().get("files", [])
+                except Exception:
+                    continue
                 mp3s = [
                     f for f in files
                     if f.get("name", "").lower().endswith(".mp3")
-                    and 100_000 < int(f.get("size", 0) or 0) < 20_000_000
+                    and 200_000 < int(f.get("size", 0) or 0) < 15_000_000
                 ]
                 if not mp3s:
                     continue
@@ -160,7 +164,7 @@ def _get_archive_music() -> str | None:
                 print(f"  Music downloaded: {os.path.getsize(tmp) // 1024} KB")
                 return tmp
 
-        print("  Archive.org: no usable MP3s found")
+        print("  Archive.org: no usable MP3s in results")
         return None
     except Exception as e:
         print(f"  Archive.org error: {e}")
