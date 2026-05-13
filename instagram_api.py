@@ -4,7 +4,7 @@ from typing import Optional, Callable
 
 import httpx
 
-GRAPH_API = "https://graph.facebook.com/v21.0"
+GRAPH_API = "https://graph.instagram.com/v21.0"
 
 
 def _cfg(key: str) -> str:
@@ -26,13 +26,9 @@ def check_connection() -> dict:
 
     try:
         with httpx.Client(timeout=15.0) as client:
-            # Use /me/accounts — works with pages_show_list permission
             resp = client.get(
-                f"{GRAPH_API}/me/accounts",
-                params={
-                    "fields": "id,name,instagram_business_account{id,username,name}",
-                    "access_token": token,
-                },
+                f"{GRAPH_API}/me",
+                params={"fields": "id,username,name", "access_token": token},
             )
             data = resp.json()
     except Exception as e:
@@ -41,18 +37,15 @@ def check_connection() -> dict:
     if "error" in data:
         return {"connected": False, "message": data["error"].get("message", "Auth failed")}
 
-    # Find Instagram account linked to any connected Page
-    for page in data.get("data", []):
-        ig = page.get("instagram_business_account")
-        if ig:
-            return {
-                "connected": True,
-                "username": ig.get("username", "healwithinbyaparna"),
-                "name": ig.get("name", page.get("name", "")),
-                "ig_id": ig.get("id"),
-            }
+    if data.get("username"):
+        return {
+            "connected": True,
+            "username": data.get("username", "healwithinbyaparna"),
+            "name": data.get("name", ""),
+            "ig_id": data.get("id"),
+        }
 
-    return {"connected": False, "message": "No Instagram Business Account found. Make sure Instagram is linked to your Facebook Page."}
+    return {"connected": False, "message": "Could not retrieve Instagram account info."}
 
 
 def post_reel(
@@ -69,7 +62,7 @@ def post_reel(
             status_callback(msg)
 
     with httpx.Client(timeout=600.0) as client:
-        # Step 1 — create media container using public Cloudinary URL
+        # Step 1 — create media container
         _log("Creating media container...")
         resp = client.post(
             f"{GRAPH_API}/{user_id}/media",
