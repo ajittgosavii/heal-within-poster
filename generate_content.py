@@ -31,7 +31,14 @@ THEMES = [
     ("ocean waves tranquil", "about releasing what no longer serves you"),
 ]
 
-PIXABAY_MUSIC_QUERIES = ["meditation", "healing ambient", "calm spiritual", "relaxing peaceful", "zen nature"]
+MUSIC_TAGS_CCMIXTER = ["ambient+instrumental", "meditation+instrumental", "healing+ambient", "new+age+instrumental", "zen+instrumental"]
+MUSIC_QUERIES_ARCHIVE = [
+    "meditation instrumental ambient",
+    "healing frequencies instrumental",
+    "binaural meditation ambient",
+    "nature sounds meditation instrumental",
+    "chakra healing instrumental",
+]
 
 
 def _cfg(key: str) -> str:
@@ -78,7 +85,7 @@ def _get_ccmixter_music() -> str | None:
     # Use urllib instead of httpx — ccMixter sends oversized headers that trip httpx's buffer limit
     import urllib.request as _ur
     import json as _json
-    tags = random.choice(["ambient", "meditation", "healing", "calm"])
+    tags = random.choice(MUSIC_TAGS_CCMIXTER)
     try:
         url = f"http://ccmixter.org/api/query?tags={tags}&f=json&limit=20"
         with _ur.urlopen(url, timeout=20) as resp:
@@ -87,8 +94,14 @@ def _get_ccmixter_music() -> str | None:
             print(f"  ccMixter unexpected response type: {type(hits)}")
             return None
 
+        # Filter out tracks with vocals by checking tags/name
+        VOCAL_WORDS = {"vocal", "vocals", "voice", "singing", "singer", "lyric", "lyrics", "spoken", "rap", "hip hop"}
         valid = []
         for h in hits:
+            track_tags = h.get("upload_tags", "").lower()
+            track_name = h.get("upload_name", "").lower()
+            if any(w in track_tags or w in track_name for w in VOCAL_WORDS):
+                continue
             for f in h.get("files", []):
                 dl = f.get("file_download_url", "")
                 if dl and any(dl.lower().endswith(ext) for ext in (".mp3", ".ogg", ".wav")):
@@ -120,7 +133,7 @@ def _get_archive_music() -> str | None:
     import urllib.request as _ur
     import urllib.parse as _up
     import json as _json
-    keyword = random.choice(["meditation", "ambient healing", "zen relaxing", "peaceful nature"])
+    keyword = random.choice(MUSIC_QUERIES_ARCHIVE)
     try:
         params = _up.urlencode([
             ("q", f"{keyword} AND mediatype:audio"),
@@ -147,10 +160,12 @@ def _get_archive_music() -> str | None:
                     files = meta.json().get("files", [])
                 except Exception:
                     continue
+                SKIP_WORDS = {"vocal", "voice", "singing", "spoken", "rap", "lyric", "song"}
                 mp3s = [
                     f for f in files
                     if f.get("name", "").lower().endswith(".mp3")
                     and 200_000 < int(f.get("size", 0) or 0) < 15_000_000
+                    and not any(w in f.get("name", "").lower() for w in SKIP_WORDS)
                 ]
                 if not mp3s:
                     continue
